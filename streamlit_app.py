@@ -142,7 +142,11 @@ st.markdown('''
 </div>
 ''', unsafe_allow_html=True)
 
-client = genai.Client(api_key=config.GEMINI_API_KEY)
+# API Key retrieval logic (Fallback to Streamlit Secrets for Cloud Deployment)
+api_key = st.secrets.get("AIzaSyBw-x6naGifEJ69RM_0ZVRY0a-zd_rBBDw") if ""AIzaSyBw-x6naGifEJ69RM_0ZVRY0a-zd_rBBDw"" in st.secrets else config.GEMINI_API_KEY
+
+# Client initialization
+client = genai.Client(api_key="AIzaSyBw-x6naGifEJ69RM_0ZVRY0a-zd_rBBDw")
 
 # Top Control Deck
 with st.container():
