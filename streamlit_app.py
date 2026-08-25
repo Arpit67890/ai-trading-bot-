@@ -257,11 +257,35 @@ def run_analysis():
     }}
     """
 
+    # Model Fallback and Retry Logic for 503 Errors
+    models_to_try = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
+    response = None
+
+    for model_name in models_to_try:
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=prompt
+            )
+            if response:
+                break
+        except Exception as err:
+            if "503" in str(err) or "UNAVAILABLE" in str(err):
+                time.sleep(1)
+                continue
+            else:
+                st.error(f"API Error: {err}")
+                status_text.empty()
+                progress_bar.empty()
+                return None
+
+    if not response:
+        st.error("All Gemini AI models are currently busy. Please click Scan again in a few seconds.")
+        status_text.empty()
+        progress_bar.empty()
+        return None
+
     try:
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt
-        )
         clean_text = response.text.replace("```json", "").replace("```", "").strip()
         result = json.loads(clean_text)
         status_text.empty()
@@ -270,14 +294,14 @@ def run_analysis():
     except Exception as e:
         status_text.empty()
         progress_bar.empty()
-        st.error(f"Execution Error: {e}")
+        st.error(f"JSON Parsing Error: {e}")
         return None
 
 if scan_btn:
     result = run_analysis()
     
     if result:
-        # History me entry add karo timestamp ke sath
+        # Add to history session state
         history_item = {
             "Time": time.strftime("%H:%M:%S"),
             "Asset": result.get("selected_pair", "N/A"),
@@ -288,9 +312,8 @@ if scan_btn:
             "R:R": result.get("risk_reward", "1:2"),
             "Reason": result.get("reason", "")
         }
-        st.session_state.scan_history.insert(0, history_item) # Newest first
-    
-    if result:
+        st.session_state.scan_history.insert(0, history_item)
+
         signal = result.get("signal", "WAIT")
         pair = result.get("selected_pair", "N/A")
 
@@ -346,7 +369,7 @@ if scan_btn:
 
 else:
     st.markdown("""
-    <div style="text-align: center; padding: 60px 20px; color: #5a6e85;">
+    <div style="text-align: center; padding: 40px 20px; color: #5a6e85;">
         <h3>Click <strong>🚀 SCAN ALL PAIRS</strong> above to execute multi-pair analysis</h3>
         <p>Real-time data feeds across Forex & Crypto will be scanned for High-Probability Price Action setups.</p>
     </div>
