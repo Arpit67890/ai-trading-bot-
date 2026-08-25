@@ -1,5 +1,6 @@
 import json
 import time
+import requests
 import pandas as pd
 import yfinance as yf
 import streamlit as st
@@ -12,7 +13,7 @@ st.set_page_config(
     page_title="Pro Trading Terminal | AI Quant Engine",
     page_icon="⚡",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="expanded"
 )
 
 # Custom Styling (Dark Mode Terminal Aesthetics)
@@ -24,6 +25,12 @@ st.markdown("""
         font-family: 'Inter', -apple-system, sans-serif;
     }
     header, footer {visibility: hidden;}
+
+    /* Sidebar Customization */
+    section[data-testid="stSidebar"] {
+        background-color: #0b0f17 !important;
+        border-right: 1px solid #1a2230;
+    }
 
     /* Top Title Header */
     .brand-header {
@@ -134,15 +141,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Top Bar Header
-st.markdown('''
-<div class="brand-header">
-    <div class="brand-title">⚡ AI QUANT MARKET TERMINAL</div>
-    <div style="color: #6b7c93; font-weight: 600; font-size: 0.9rem;">Multi-Pair Confluence Engine</div>
-</div>
-''', unsafe_allow_html=True)
-
-# Safe API Key retrieval (Checks Streamlit Secrets first, then config.py)
+# Safe API Key retrieval
 api_key = None
 try:
     if "GEMINI_API_KEY" in st.secrets:
@@ -155,31 +154,50 @@ if not api_key:
 
 client = genai.Client(api_key=api_key)
 
-# Initialize scan history in session state
+# Session State Initialization
 if "scan_history" not in st.session_state:
     st.session_state.scan_history = []
+if "telegram_bot_token" not in st.session_state:
+    st.session_state.telegram_bot_token = ""
+if "telegram_chat_id" not in st.session_state:
+    st.session_state.telegram_chat_id = ""
 
-# Top Control Deck
-with st.container():
-    st.markdown('<div class="control-card">', unsafe_allow_html=True)
-    c1, c2 = st.columns([3, 1])
-    with c1:
-        market_choice = st.radio(
-            "Target Asset Class:",
-            ("Forex, Commodities & Indices", "Crypto"),
-            horizontal=True
-        )
-    with c2:
-        st.write(" ")
-        scan_btn = st.button("🚀 SCAN ALL PAIRS")
-    st.markdown('</div>', unsafe_allow_html=True)
+# Sidebar Navigation Panel
+st.sidebar.markdown("## ⚡ **Quant Navigation**")
+selected_tab = st.sidebar.radio(
+    "Features & Control Hub",
+    (
+        "⚡ Live Quant Terminal",
+        "🧮 Risk & Lot Calculator",
+        "📰 News & Volatility Radar",
+        "📊 Analytics & Telegram Alerts"
+    )
+)
 
-if market_choice == "Crypto":
-    SYMBOLS = config.CRYPTO_SYMBOLS
-    market_type = "Crypto"
-else:
-    SYMBOLS = config.FOREX_SYMBOLS
-    market_type = "Forex & Commodities"
+st.sidebar.markdown("---")
+st.sidebar.markdown("**System Status:** 🟢 `Operational`")
+st.sidebar.markdown("**Engine:** `Gemini 2.5 Multi-Timeframe`")
+
+# Global Helper Functions
+def send_telegram_alert(signal_data):
+    token = st.session_state.telegram_bot_token
+    chat_id = st.session_state.telegram_chat_id
+    if token and chat_id:
+        msg = f"""🚨 **AI QUANT SIGNAL ALERT** 🚨
+        
+**Asset:** {signal_data.get('selected_pair')}
+**Signal:** {signal_data.get('signal')}
+**Entry:** {signal_data.get('entry')}
+**Stop Loss:** {signal_data.get('stop_loss')}
+**Take Profit:** {signal_data.get('take_profit')}
+**Risk/Reward:** {signal_data.get('risk_reward')}
+
+**Rationale:** {signal_data.get('reason')}"""
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        try:
+            requests.post(url, json={"chat_id": chat_id, "text": msg, "parse_mode": "Markdown"})
+        except Exception:
+            pass
 
 def get_tv_symbol(pair_name):
     clean_name = pair_name.split()[0].replace('/', '').replace('=', '')
@@ -193,196 +211,294 @@ def get_tv_symbol(pair_name):
     if "XAUUSD" in clean_name: return "OANDA:XAUUSD"
     return f"FX:{clean_name}"
 
-def run_analysis():
-    market_summary = {}
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-
-    total_symbols = len(SYMBOLS)
-    
-    for idx, (name, ticker) in enumerate(SYMBOLS.items()):
-        status_text.markdown(f"Fetching Live Feed: `{name}`...")
-        try:
-            data = yf.download(tickers=ticker, period=config.DATA_PERIOD, interval=config.TIMEFRAME, progress=False)
-            if not data.empty and len(data) >= 30:
-                if isinstance(data.columns, pd.MultiIndex):
-                    data.columns = data.columns.get_level_values(0)
-
-                data['EMA20'] = data['Close'].ewm(span=config.EMA_FAST).mean()
-                data['EMA50'] = data['Close'].ewm(span=config.EMA_SLOW).mean()
-
-                delta = data['Close'].diff()
-                gain = delta.clip(lower=0).rolling(config.RSI_PERIOD).mean()
-                loss = (-delta.clip(upper=0)).rolling(config.RSI_PERIOD).mean()
-                rs = gain / loss
-                data['RSI'] = 100 - (100 / (1 + rs))
-
-                support = float(data['Low'].tail(20).min())
-                resistance = float(data['High'].tail(20).max())
-                latest_price = float(data['Close'].iloc[-1])
-
-                recent_candles = data[['Open', 'High', 'Low', 'Close', 'EMA20', 'EMA50', 'RSI']].tail(5).to_dict(orient='records')
-
-                market_summary[name] = {
-                    "current_price": latest_price,
-                    "support_20p": support,
-                    "resistance_20p": resistance,
-                    "recent_candles": recent_candles
-                }
-        except Exception:
-            pass
-        
-        progress_bar.progress((idx + 1) / total_symbols)
-
-    status_text.markdown("🤖 **Gemini AI evaluating best setup across all charts...**")
-
-    prompt = f"""
-    You are a Senior Technical Analyst. Analyze live {market_type} market data:
-    {json.dumps(market_summary, indent=2, default=str)}
-
-    RULES:
-    1. Select ONE pair with highest probability setup (EMA Trend, S/R Bounce/Breakout, RSI).
-    2. If market is uncertain, set signal to "WAIT".
-    3. R:R Ratio MUST be 1:2 minimum.
-
-    Return ONLY valid JSON:
-    {{
-      "selected_pair": "PAIR_NAME",
-      "signal": "BUY" | "SELL" | "WAIT",
-      "entry": 0.0,
-      "stop_loss": 0.0,
-      "take_profit": 0.0,
-      "risk_reward": "1:2",
-      "reason": "Technical breakdown"
-    }}
-    """
-
-    # Model Fallback and Retry Logic for 503 Errors
-    models_to_try = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
-    response = None
-
-    for model_name in models_to_try:
-        try:
-            response = client.models.generate_content(
-                model=model_name,
-                contents=prompt
-            )
-            if response:
-                break
-        except Exception as err:
-            if "503" in str(err) or "UNAVAILABLE" in str(err):
-                time.sleep(1)
-                continue
-            else:
-                st.error(f"API Error: {err}")
-                status_text.empty()
-                progress_bar.empty()
-                return None
-
-    if not response:
-        st.error("All Gemini AI models are currently busy. Please click Scan again in a few seconds.")
-        status_text.empty()
-        progress_bar.empty()
-        return None
-
-    try:
-        clean_text = response.text.replace("```json", "").replace("```", "").strip()
-        result = json.loads(clean_text)
-        status_text.empty()
-        progress_bar.empty()
-        return result
-    except Exception as e:
-        status_text.empty()
-        progress_bar.empty()
-        st.error(f"JSON Parsing Error: {e}")
-        return None
-
-if scan_btn:
-    result = run_analysis()
-    
-    if result:
-        # Add to history session state
-        history_item = {
-            "Time": time.strftime("%H:%M:%S"),
-            "Asset": result.get("selected_pair", "N/A"),
-            "Signal": result.get("signal", "WAIT"),
-            "Entry": result.get("entry", 0.0),
-            "SL": result.get("stop_loss", 0.0),
-            "TP": result.get("take_profit", 0.0),
-            "R:R": result.get("risk_reward", "1:2"),
-            "Reason": result.get("reason", "")
-        }
-        st.session_state.scan_history.insert(0, history_item)
-
-        signal = result.get("signal", "WAIT")
-        pair = result.get("selected_pair", "N/A")
-
-        st.markdown("---")
-        
-        col_pair, col_badge = st.columns([3, 1])
-        with col_pair:
-            st.markdown(f"## Selected Asset: **{pair}**")
-        with col_badge:
-            if signal == "BUY":
-                st.markdown('<div class="badge-buy">🟢 BUY SIGNAL</div>', unsafe_allow_html=True)
-            elif signal == "SELL":
-                st.markdown('<div class="badge-sell">🔴 SELL SIGNAL</div>', unsafe_allow_html=True)
-            else:
-                st.markdown('<div class="badge-wait">🟡 WAIT / NO TRADE</div>', unsafe_allow_html=True)
-
-        st.write("")
-
-        # 4 Metric Cards
-        m1, m2, m3, m4 = st.columns(4)
-        with m1:
-            st.markdown(f'<div class="metric-card"><div class="metric-label">Entry Price</div><div class="metric-value">{result.get("entry", 0.0)}</div></div>', unsafe_allow_html=True)
-        with m2:
-            st.markdown(f'<div class="metric-card"><div class="metric-label">Stop Loss</div><div class="metric-value" style="color:#ef4444;">{result.get("stop_loss", 0.0)}</div></div>', unsafe_allow_html=True)
-        with m3:
-            st.markdown(f'<div class="metric-card"><div class="metric-label">Take Profit</div><div class="metric-value" style="color:#10b981;">{result.get("take_profit", 0.0)}</div></div>', unsafe_allow_html=True)
-        with m4:
-            st.markdown(f'<div class="metric-card"><div class="metric-label">Risk / Reward</div><div class="metric-value" style="color:#00c6ff;">{result.get("risk_reward", "1:2")}</div></div>', unsafe_allow_html=True)
-
-        st.write("")
-
-        # Two Column Split: Chart + Analysis
-        col_chart, col_details = st.columns([3, 2])
-
-        with col_chart:
-            st.markdown("### 📊 Live Interactive Chart")
-            tv_symbol = get_tv_symbol(pair)
-            tv_widget = f"""
-            <div class="tradingview-widget-container" style="height:450px;">
-              <iframe src="https://s.tradingview.com/widgetembed/?frameElementId=tradingview_1&symbol={tv_symbol}&interval=15&hidesidetoolbar=1&symboledit=1&saveimage=1&toolbarbg=0b0e14&theme=dark&style=1&timezone=Etc%2FUTC" width="100%" height="450" frameborder="0" allowtransparency="true" scrolling="no"></iframe>
-            </div>
-            """
-            components.html(tv_widget, height=460)
-
-        with col_details:
-            st.markdown("### 📝 Technical Rationale")
-            st.markdown(f'''
-            <div class="reason-box">
-                <strong style="color: #00c6ff;">AI Confluence Breakdown:</strong><br><br>
-                {result.get("reason", "No detailed rationale provided.")}
-            </div>
-            ''', unsafe_allow_html=True)
-
-else:
-    st.markdown("""
-    <div style="text-align: center; padding: 40px 20px; color: #5a6e85;">
-        <h3>Click <strong>🚀 SCAN ALL PAIRS</strong> above to execute multi-pair analysis</h3>
-        <p>Real-time data feeds across Forex & Crypto will be scanned for High-Probability Price Action setups.</p>
+# ==========================================
+# TAB 1: LIVE QUANT TERMINAL
+# ==========================================
+if selected_tab == "⚡ Live Quant Terminal":
+    st.markdown('''
+    <div class="brand-header">
+        <div class="brand-title">⚡ AI QUANT MARKET TERMINAL</div>
+        <div style="color: #6b7c93; font-weight: 600; font-size: 0.9rem;">Multi-Pair Confluence Engine</div>
     </div>
-    """, unsafe_allow_html=True)
+    ''', unsafe_allow_html=True)
 
-# --- SCAN HISTORY SECTION ---
-if st.session_state.scan_history:
-    st.markdown("---")
-    st.markdown("### 📜 Scan History & Past Signals")
+    with st.container():
+        st.markdown('<div class="control-card">', unsafe_allow_html=True)
+        c1, c2 = st.columns([3, 1])
+        with c1:
+            market_choice = st.radio(
+                "Target Asset Class:",
+                ("Forex, Commodities & Indices", "Crypto"),
+                horizontal=True
+            )
+        with c2:
+            st.write(" ")
+            scan_btn = st.button("🚀 SCAN ALL PAIRS")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+    SYMBOLS = config.CRYPTO_SYMBOLS if market_choice == "Crypto" else config.FOREX_SYMBOLS
+    market_type = "Crypto" if market_choice == "Crypto" else "Forex & Commodities"
+
+    def run_analysis():
+        market_summary = {}
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        total_symbols = len(SYMBOLS)
+        
+        for idx, (name, ticker) in enumerate(SYMBOLS.items()):
+            status_text.markdown(f"Fetching Live Feed: `{name}`...")
+            try:
+                data = yf.download(tickers=ticker, period=config.DATA_PERIOD, interval=config.TIMEFRAME, progress=False)
+                if not data.empty and len(data) >= 30:
+                    if isinstance(data.columns, pd.MultiIndex):
+                        data.columns = data.columns.get_level_values(0)
+
+                    data['EMA20'] = data['Close'].ewm(span=config.EMA_FAST).mean()
+                    data['EMA50'] = data['Close'].ewm(span=config.EMA_SLOW).mean()
+
+                    delta = data['Close'].diff()
+                    gain = delta.clip(lower=0).rolling(config.RSI_PERIOD).mean()
+                    loss = (-delta.clip(upper=0)).rolling(config.RSI_PERIOD).mean()
+                    rs = gain / loss
+                    data['RSI'] = 100 - (100 / (1 + rs))
+
+                    support = float(data['Low'].tail(20).min())
+                    resistance = float(data['High'].tail(20).max())
+                    latest_price = float(data['Close'].iloc[-1])
+
+                    recent_candles = data[['Open', 'High', 'Low', 'Close', 'EMA20', 'EMA50', 'RSI']].tail(5).to_dict(orient='records')
+
+                    market_summary[name] = {
+                        "current_price": latest_price,
+                        "support_20p": support,
+                        "resistance_20p": resistance,
+                        "recent_candles": recent_candles
+                    }
+            except Exception:
+                pass
+            progress_bar.progress((idx + 1) / total_symbols)
+
+        status_text.markdown("🤖 **Gemini AI evaluating multi-timeframe confluence...**")
+
+        prompt = f"""
+        You are a Senior Technical Analyst. Analyze live {market_type} market data:
+        {json.dumps(market_summary, indent=2, default=str)}
+
+        RULES:
+        1. Select ONE pair with highest probability setup (EMA Trend, S/R Bounce/Breakout, RSI).
+        2. If market is uncertain, set signal to "WAIT".
+        3. R:R Ratio MUST be 1:2 minimum.
+
+        Return ONLY valid JSON:
+        {{
+          "selected_pair": "PAIR_NAME",
+          "signal": "BUY" | "SELL" | "WAIT",
+          "entry": 0.0,
+          "stop_loss": 0.0,
+          "take_profit": 0.0,
+          "risk_reward": "1:2",
+          "reason": "Technical breakdown"
+        }}
+        """
+
+        models_to_try = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
+        response = None
+        for model_name in models_to_try:
+            try:
+                response = client.models.generate_content(model=model_name, contents=prompt)
+                if response: break
+            except Exception as err:
+                if "503" in str(err) or "UNAVAILABLE" in str(err):
+                    time.sleep(1)
+                    continue
+                else:
+                    st.error(f"API Error: {err}")
+                    status_text.empty()
+                    progress_bar.empty()
+                    return None
+
+        if not response:
+            st.error("All Gemini AI models are currently busy. Please click Scan again.")
+            status_text.empty()
+            progress_bar.empty()
+            return None
+
+        try:
+            clean_text = response.text.replace("```json", "").replace("```", "").strip()
+            result = json.loads(clean_text)
+            status_text.empty()
+            progress_bar.empty()
+            return result
+        except Exception as e:
+            status_text.empty()
+            progress_bar.empty()
+            st.error(f"JSON Parsing Error: {e}")
+            return None
+
+    if scan_btn:
+        result = run_analysis()
+        if result:
+            history_item = {
+                "Time": time.strftime("%H:%M:%S"),
+                "Asset": result.get("selected_pair", "N/A"),
+                "Signal": result.get("signal", "WAIT"),
+                "Entry": result.get("entry", 0.0),
+                "SL": result.get("stop_loss", 0.0),
+                "TP": result.get("take_profit", 0.0),
+                "R:R": result.get("risk_reward", "1:2"),
+                "Reason": result.get("reason", "")
+            }
+            st.session_state.scan_history.insert(0, history_item)
+            send_telegram_alert(result)
+
+            signal = result.get("signal", "WAIT")
+            pair = result.get("selected_pair", "N/A")
+
+            st.markdown("---")
+            col_pair, col_badge = st.columns([3, 1])
+            with col_pair:
+                st.markdown(f"## Selected Asset: **{pair}**")
+            with col_badge:
+                if signal == "BUY":
+                    st.markdown('<div class="badge-buy">🟢 BUY SIGNAL</div>', unsafe_allow_html=True)
+                elif signal == "SELL":
+                    st.markdown('<div class="badge-sell">🔴 SELL SIGNAL</div>', unsafe_allow_html=True)
+                else:
+                    st.markdown('<div class="badge-wait">🟡 WAIT / NO TRADE</div>', unsafe_allow_html=True)
+
+            st.write("")
+            m1, m2, m3, m4 = st.columns(4)
+            with m1:
+                st.markdown(f'<div class="metric-card"><div class="metric-label">Entry Price</div><div class="metric-value">{result.get("entry", 0.0)}</div></div>', unsafe_allow_html=True)
+            with m2:
+                st.markdown(f'<div class="metric-card"><div class="metric-label">Stop Loss</div><div class="metric-value" style="color:#ef4444;">{result.get("stop_loss", 0.0)}</div></div>', unsafe_allow_html=True)
+            with m3:
+                st.markdown(f'<div class="metric-card"><div class="metric-label">Take Profit</div><div class="metric-value" style="color:#10b981;">{result.get("take_profit", 0.0)}</div></div>', unsafe_allow_html=True)
+            with m4:
+                st.markdown(f'<div class="metric-card"><div class="metric-label">Risk / Reward</div><div class="metric-value" style="color:#00c6ff;">{result.get("risk_reward", "1:2")}</div></div>', unsafe_allow_html=True)
+
+            st.write("")
+            col_chart, col_details = st.columns([3, 2])
+            with col_chart:
+                st.markdown("### 📊 Live Interactive Chart")
+                tv_symbol = get_tv_symbol(pair)
+                tv_widget = f"""
+                <div class="tradingview-widget-container" style="height:450px;">
+                  <iframe src="https://s.tradingview.com/widgetembed/?frameElementId=tradingview_1&symbol={tv_symbol}&interval=15&hidesidetoolbar=1&symboledit=1&saveimage=1&toolbarbg=0b0e14&theme=dark&style=1&timezone=Etc%2FUTC" width="100%" height="450" frameborder="0" allowtransparency="true" scrolling="no"></iframe>
+                </div>
+                """
+                components.html(tv_widget, height=460)
+
+            with col_details:
+                st.markdown("### 📝 Technical Rationale")
+                st.markdown(f'''
+                <div class="reason-box">
+                    <strong style="color: #00c6ff;">AI Confluence Breakdown:</strong><br><br>
+                    {result.get("reason", "No detailed rationale provided.")}
+                </div>
+                ''', unsafe_allow_html=True)
+    else:
+        st.markdown("""
+        <div style="text-align: center; padding: 40px 20px; color: #5a6e85;">
+            <h3>Click <strong>🚀 SCAN ALL PAIRS</strong> above to execute multi-pair analysis</h3>
+            <p>Real-time data feeds across Forex & Crypto will be scanned for High-Probability Price Action setups.</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+    if st.session_state.scan_history:
+        st.markdown("---")
+        st.markdown("### 📜 Scan History & Past Signals")
+        history_df = pd.DataFrame(st.session_state.scan_history)
+        st.dataframe(
+            history_df[["Time", "Asset", "Signal", "Entry", "SL", "TP", "R:R", "Reason"]],
+            use_container_width=True,
+            hide_index=True
+        )
+
+# ==========================================
+# TAB 2: RISK & LOT CALCULATOR
+# ==========================================
+elif selected_tab == "🧮 Risk & Lot Calculator":
+    st.markdown("## 🧮 Quantitative Position & Lot Size Calculator")
+    st.write("Calculate exact position size according to risk management rules.")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        account_balance = st.number_input("Total Account Balance ($)", value=1000.0, step=100.0)
+        risk_percent = st.slider("Risk Per Trade (%)", min_value=0.5, max_value=5.0, value=1.0, step=0.5)
+        entry_p = st.number_input("Planned Entry Price", value=1.0850, format="%.5f")
+        sl_p = st.number_input("Planned Stop Loss Price", value=1.0820, format="%.5f")
     
-    history_df = pd.DataFrame(st.session_state.scan_history)
-    st.dataframe(
-        history_df[["Time", "Asset", "Signal", "Entry", "SL", "TP", "R:R", "Reason"]],
-        use_container_width=True,
-        hide_index=True
-    )
+    with col2:
+        risk_amount = account_balance * (risk_percent / 100)
+        pip_distance = abs(entry_p - sl_p)
+        
+        st.markdown("### **Calculated Parameters:**")
+        st.markdown(f'<div class="metric-card"><div class="metric-label">Max Risk Amount ($)</div><div class="metric-value" style="color:#ef4444;">${risk_amount:.2f}</div></div>', unsafe_allow_html=True)
+        st.write("")
+        
+        if pip_distance > 0:
+            pips = pip_distance * 10000 if entry_p < 500 else pip_distance
+            # Standard FX lot formula
+            recommended_lot = risk_amount / (pips * 10) if entry_p < 500 else risk_amount / pip_distance
+            st.markdown(f'<div class="metric-card"><div class="metric-label">Recommended Lot Size</div><div class="metric-value" style="color:#00c6ff;">{max(0.01, round(recommended_lot, 2))} Lots</div></div>', unsafe_allow_html=True)
+        else:
+            st.info("Set valid Entry and Stop Loss prices to calculate lot sizes.")
+
+# ==========================================
+# TAB 3: NEWS & VOLATILITY RADAR
+# ==========================================
+elif selected_tab == "📰 News & Volatility Radar":
+    st.markdown("## 📰 Economic News & Market Volatility Radar")
+    st.write("Track high-impact macroeconomic events and market volatility before entering trades.")
+
+    col_n1, col_n2 = st.columns(2)
+    with col_n1:
+        st.markdown("### **Market Volatility Index**")
+        vix_df = yf.download("^VIX", period="5d", interval="1d", progress=False)
+        if not vix_df.empty:
+            if isinstance(vix_df.columns, pd.MultiIndex):
+                vix_df.columns = vix_df.columns.get_level_values(0)
+            latest_vix = vix_df['Close'].iloc[-1]
+            st.metric("CBOE Volatility Index (VIX)", f"{latest_vix:.2f}")
+            if latest_vix > 20:
+                st.warning("⚠️ **High Volatility Alert:** Expect sharp swings & slippage.")
+            else:
+                st.success("🟢 **Normal Market Volatility:** Ideal conditions for trend strategies.")
+
+    with col_n2:
+        st.markdown("### **Trading Rules During High Impact Events**")
+        st.markdown("""
+        - 🚫 **Do not enter trades 15 mins before/after NFP, CPI, or FOMC.**
+        - 📉 Spreads widen drastically during major news announcements.
+        - 🔒 Trail Stop Loss to Breakeven if open trades are in profit.
+        """)
+
+# ==========================================
+# TAB 4: ANALYTICS & TELEGRAM ALERTS
+# ==========================================
+elif selected_tab == "📊 Analytics & Telegram Alerts":
+    st.markdown("## 📊 Performance Analytics & Live Alerts Integration")
+
+    col_a1, col_a2 = st.columns(2)
+    with col_a1:
+        st.markdown("### 📩 Telegram Signal Bot Setup")
+        t_token = st.text_input("Telegram Bot Token", value=st.session_state.telegram_bot_token, type="password")
+        t_cid = st.text_input("Telegram Chat ID", value=st.session_state.telegram_chat_id)
+        
+        if st.button("Save Telegram Configuration"):
+            st.session_state.telegram_bot_token = t_token
+            st.session_state.telegram_chat_id = t_cid
+            st.success("Telegram Alert Configuration Saved!")
+
+    with col_a2:
+        st.markdown("### 📈 Session Scan Statistics")
+        total_scans = len(st.session_state.scan_history)
+        buys = sum(1 for x in st.session_state.scan_history if x["Signal"] == "BUY")
+        sells = sum(1 for x in st.session_state.scan_history if x["Signal"] == "SELL")
+        waits = sum(1 for x in st.session_state.scan_history if x["Signal"] == "WAIT")
+
+        st.write(f"- **Total Signals Generated:** {total_scans}")
+        st.write(f"- 🟢 **Buy Signals:** {buys}")
+        st.write(f"- 🔴 **Sell Signals:** {sells}")
+        st.write(f"- 🟡 **No Trade / Wait:** {waits}")
