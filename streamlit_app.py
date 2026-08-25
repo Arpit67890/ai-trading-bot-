@@ -134,18 +134,25 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Top Bar
+# Top Bar Header
 st.markdown('''
 <div class="brand-header">
-    <div class="brand-title">⚡ QUANT QUANT AI TERMINAL</div>
+    <div class="brand-title">⚡ AI QUANT MARKET TERMINAL</div>
     <div style="color: #6b7c93; font-weight: 600; font-size: 0.9rem;">Multi-Pair Confluence Engine</div>
 </div>
 ''', unsafe_allow_html=True)
 
-# API Key retrieval (Streamlit Secrets priority, fallback to config)
-api_key = st.secrets.get("GEMINI_API_KEY", getattr(config, "GEMINI_API_KEY", None))
+# Safe API Key retrieval (Checks Streamlit Secrets first, then config.py)
+api_key = None
+try:
+    if "GEMINI_API_KEY" in st.secrets:
+        api_key = st.secrets["GEMINI_API_KEY"]
+except Exception:
+    pass
 
-# Client initialization
+if not api_key:
+    api_key = getattr(config, "GEMINI_API_KEY", None)
+
 client = genai.Client(api_key=api_key)
 
 # Top Control Deck
