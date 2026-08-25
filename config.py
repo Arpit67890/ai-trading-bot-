@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-GEMINI_API_KEY = os.environ.get("AIzaSyBw-x6naGifEJ69RM_0ZVRY0a-zd_rBBDw")
+GEMINI_API_KEY = ""
 
 # Expanded Forex, Commodities & Indices
 FOREX_SYMBOLS = {

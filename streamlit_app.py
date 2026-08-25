@@ -155,6 +155,10 @@ if not api_key:
 
 client = genai.Client(api_key=api_key)
 
+# Initialize scan history in session state
+if "scan_history" not in st.session_state:
+    st.session_state.scan_history = []
+
 # Top Control Deck
 with st.container():
     st.markdown('<div class="control-card">', unsafe_allow_html=True)
@@ -273,6 +277,20 @@ if scan_btn:
     result = run_analysis()
     
     if result:
+        # History me entry add karo timestamp ke sath
+        history_item = {
+            "Time": time.strftime("%H:%M:%S"),
+            "Asset": result.get("selected_pair", "N/A"),
+            "Signal": result.get("signal", "WAIT"),
+            "Entry": result.get("entry", 0.0),
+            "SL": result.get("stop_loss", 0.0),
+            "TP": result.get("take_profit", 0.0),
+            "R:R": result.get("risk_reward", "1:2"),
+            "Reason": result.get("reason", "")
+        }
+        st.session_state.scan_history.insert(0, history_item) # Newest first
+    
+    if result:
         signal = result.get("signal", "WAIT")
         pair = result.get("selected_pair", "N/A")
 
@@ -333,3 +351,15 @@ else:
         <p>Real-time data feeds across Forex & Crypto will be scanned for High-Probability Price Action setups.</p>
     </div>
     """, unsafe_allow_html=True)
+
+# --- SCAN HISTORY SECTION ---
+if st.session_state.scan_history:
+    st.markdown("---")
+    st.markdown("### 📜 Scan History & Past Signals")
+    
+    history_df = pd.DataFrame(st.session_state.scan_history)
+    st.dataframe(
+        history_df[["Time", "Asset", "Signal", "Entry", "SL", "TP", "R:R", "Reason"]],
+        use_container_width=True,
+        hide_index=True
+    )
