@@ -16,7 +16,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Custom Styling (Dark Mode Terminal Aesthetics)
+# Custom Styling (Dark Mode Terminal Aesthetics with Visible Sidebar Toggle)
 st.markdown("""
 <style>
     .stApp {
@@ -24,7 +24,21 @@ st.markdown("""
         color: #d1dbe5;
         font-family: 'Inter', -apple-system, sans-serif;
     }
-    header, footer {visibility: hidden;}
+    footer {visibility: hidden;}
+    
+    /* Ensure Header & Sidebar Toggle Button are visible */
+    header {
+        visibility: visible !important;
+        background-color: transparent !important;
+    }
+    
+    /* Highlight Sidebar Collapse/Expand Control Button */
+    button[aria-label="Toggle sidebar"], button[data-testid="baseButton-header"] {
+        background-color: #0f141c !important;
+        border: 1px solid #00c6ff !important;
+        color: #00c6ff !important;
+        border-radius: 6px !important;
+    }
 
     /* Sidebar Customization */
     section[data-testid="stSidebar"] {
@@ -165,7 +179,7 @@ if "telegram_chat_id" not in st.session_state:
 # Sidebar Navigation Panel
 st.sidebar.markdown("## ⚡ **Quant Navigation**")
 selected_tab = st.sidebar.radio(
-    "Features & Control Hub",
+    "Select Feature Module",
     (
         "⚡ Live Quant Terminal",
         "🧮 Risk & Lot Calculator",
@@ -439,7 +453,6 @@ elif selected_tab == "🧮 Risk & Lot Calculator":
         
         if pip_distance > 0:
             pips = pip_distance * 10000 if entry_p < 500 else pip_distance
-            # Standard FX lot formula
             recommended_lot = risk_amount / (pips * 10) if entry_p < 500 else risk_amount / pip_distance
             st.markdown(f'<div class="metric-card"><div class="metric-label">Recommended Lot Size</div><div class="metric-value" style="color:#00c6ff;">{max(0.01, round(recommended_lot, 2))} Lots</div></div>', unsafe_allow_html=True)
         else:
